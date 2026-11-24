@@ -158,11 +158,54 @@ instantStyle.textContent = `
     :not(.translator-paused-mode).translator-replace-mode .translator-break {
         display: none !important;
     }
+
+    /* GitHub 原生工具栏注入按钮样式 */
+    .translator-gh-btn {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 4px !important;
+        height: 28px !important;
+        padding: 3px 8px !important;
+        font-size: 12px !important;
+        font-weight: 500 !important;
+        line-height: 20px !important;
+        color: #24292f !important;
+        background-color: #f6f8fa !important;
+        border: 1px solid rgba(31, 35, 40, 0.15) !important;
+        border-radius: 6px !important;
+        cursor: pointer !important;
+        user-select: none !important;
+        text-decoration: none !important;
+        vertical-align: middle !important;
+        transition: 80ms cubic-bezier(0.33, 1, 0.68, 1) !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif !important;
+        margin-right: 6px !important;
+    }
+    .translator-gh-btn:hover {
+        background-color: #f3f4f6 !important;
+        border-color: rgba(31, 35, 40, 0.25) !important;
+        color: #5842f4 !important;
+    }
+    .translator-gh-btn:active {
+        background-color: #ebecf0 !important;
+    }
+    .translator-gh-btn svg {
+        width: 13px !important;
+        height: 13px !important;
+        fill: currentColor !important;
+    }
+    #gh-translator-btn-group {
+        display: inline-flex !important;
+        align-items: center !important;
+        margin-right: 6px !important;
+        vertical-align: middle !important;
+    }
 `;
 (document.head || document.documentElement).appendChild(instantStyle);
 
 function initPanel() {
     let choice = GM_getValue('translate_choice', '谷歌翻译');
+    let backupChoice = GM_getValue('translate_backup_choice', '必应翻译');
 
     // 1. 创建全屏透明遮罩（用于捕获点击空白处关闭面板，无毛玻璃、无暗黑遮挡）
     let mask = document.createElement('div');
@@ -203,18 +246,24 @@ function initPanel() {
     let body = document.createElement('div');
     body.className = 'translator-body';
 
-    // 模块 A：翻译引擎选择
+    // 模块 A：主备双引擎与无感容灾
     let engineSection = document.createElement('div');
     engineSection.className = 'translator-section';
-    engineSection.innerHTML = p.createHTML('<div class="translator-section-title">翻译引擎 (服务源)</div>');
+    engineSection.innerHTML = p.createHTML('<div class="translator-section-title">翻译引擎 (主备容灾)</div>');
+
+    // 1. 首选引擎
+    let primaryLabel = document.createElement('div');
+    primaryLabel.className = 'translator-sub-label';
+    primaryLabel.innerText = '首选主引擎：';
+    engineSection.appendChild(primaryLabel);
 
     let selectWrapper = document.createElement('div');
     selectWrapper.className = 'engine-select-wrapper';
-
     let select = document.createElement("select");
     select.className = 'engine-select';
     select.onchange = () => {
         GM_setValue('translate_choice', select.value);
+        choice = select.value;
         const titleSpan = titleBox.querySelector('#panel_title_text');
         if (titleSpan) titleSpan.innerText = "控制面板 (已切换，刷新应用)";
     };
@@ -223,6 +272,56 @@ function initPanel() {
     }
     selectWrapper.appendChild(select);
     engineSection.appendChild(selectWrapper);
+
+    // 2. 备用引擎
+    let backupLabel = document.createElement('div');
+    backupLabel.className = 'translator-sub-label';
+    backupLabel.style.marginTop = '6px';
+    backupLabel.innerText = '备用容灾引擎：';
+    engineSection.appendChild(backupLabel);
+
+    let backupWrapper = document.createElement('div');
+    backupWrapper.className = 'engine-select-wrapper';
+    let backupSelect = document.createElement("select");
+    backupSelect.className = 'engine-select';
+    backupSelect.onchange = () => {
+        GM_setValue('translate_backup_choice', backupSelect.value);
+        backupChoice = backupSelect.value;
+        const titleSpan = titleBox.querySelector('#panel_title_text');
+        if (titleSpan) titleSpan.innerText = "控制面板 (已更新备用引擎)";
+    };
+    for (let i in transdict) {
+        backupSelect.innerHTML = p.createHTML(backupSelect.innerHTML + '<option value="' + i + '">' + i + '</option>');
+    }
+    backupWrapper.appendChild(backupSelect);
+    engineSection.appendChild(backupWrapper);
+
+    // 3. 主备无感容灾开关
+    let failoverRow = document.createElement('div');
+    failoverRow.className = 'option-item';
+    failoverRow.style.marginTop = '6px';
+
+    let failoverLabel = document.createElement('span');
+    failoverLabel.innerText = '主备自动容灾切换 (失败自动降级)';
+
+    let failoverSwitch = document.createElement('label');
+    failoverSwitch.className = 'translator-switch';
+    let failoverInput = document.createElement('input');
+    failoverInput.type = 'checkbox';
+    failoverInput.checked = GM_getValue('enable_failover', true);
+    failoverInput.onchange = () => {
+        GM_setValue('enable_failover', failoverInput.checked);
+        const titleSpan = titleBox.querySelector('#panel_title_text');
+        if (titleSpan) titleSpan.innerText = "控制面板 (已更新)";
+    };
+    let failoverSlider = document.createElement('span');
+    failoverSlider.className = 'translator-slider';
+    failoverSwitch.appendChild(failoverInput);
+    failoverSwitch.appendChild(failoverSlider);
+    failoverRow.appendChild(failoverLabel);
+    failoverRow.appendChild(failoverSwitch);
+    engineSection.appendChild(failoverRow);
+
     body.appendChild(engineSection);
 
     // 模块 B：通用基础配置（极简简约 Switch 切换，排版更紧凑）
@@ -271,7 +370,104 @@ function initPanel() {
     }
     body.appendChild(baseSection);
 
-    // 模块 C：当前启用规则的个性化配置
+    // 模块 C：全局快捷键支持（默认关闭，自定义设置）
+    let shortcutSection = document.createElement('div');
+    shortcutSection.className = 'translator-section';
+    shortcutSection.innerHTML = p.createHTML('<div class="translator-section-title">全局快捷键设置 (默认关闭)</div>');
+
+    let shortcutToggleRow = document.createElement('div');
+    shortcutToggleRow.className = 'option-item';
+
+    let shortcutMasterLabel = document.createElement('span');
+    shortcutMasterLabel.innerText = '启用全局快捷键';
+
+    let shortcutMasterSwitch = document.createElement('label');
+    shortcutMasterSwitch.className = 'translator-switch';
+
+    let shortcutMasterInput = document.createElement('input');
+    shortcutMasterInput.type = 'checkbox';
+    shortcutMasterInput.checked = GM_getValue('enable_shortcuts', false);
+
+    let shortcutBox = document.createElement('div');
+    shortcutBox.style.display = shortcutMasterInput.checked ? 'flex' : 'none';
+    shortcutBox.style.flexDirection = 'column';
+    shortcutBox.style.gap = '4px';
+    shortcutBox.style.marginTop = '6px';
+    shortcutBox.style.borderTop = '1px dashed #e1e4e8';
+    shortcutBox.style.paddingTop = '6px';
+
+    shortcutMasterInput.onchange = () => {
+        GM_setValue('enable_shortcuts', shortcutMasterInput.checked);
+        shortcutBox.style.display = shortcutMasterInput.checked ? 'flex' : 'none';
+        const titleSpan = titleBox.querySelector('#panel_title_text');
+        if (titleSpan) titleSpan.innerText = "控制面板 (已更新快捷键开关)";
+    };
+
+    let shortcutSlider = document.createElement('span');
+    shortcutSlider.className = 'translator-slider';
+    shortcutMasterSwitch.appendChild(shortcutMasterInput);
+    shortcutMasterSwitch.appendChild(shortcutSlider);
+    shortcutToggleRow.appendChild(shortcutMasterLabel);
+    shortcutToggleRow.appendChild(shortcutMasterSwitch);
+    shortcutSection.appendChild(shortcutToggleRow);
+
+    // 创建可自定义录制快捷键项
+    const createShortcutRow = (label, keyName, defaultVal) => {
+        let row = document.createElement('div');
+        row.className = 'shortcut-row';
+
+        let labelSpan = document.createElement('span');
+        labelSpan.innerText = label;
+
+        let keyInput = document.createElement('input');
+        keyInput.type = 'text';
+        keyInput.readOnly = true;
+        keyInput.className = 'shortcut-input';
+        keyInput.value = GM_getValue(keyName, defaultVal);
+        keyInput.title = '点击后在键盘上直接按下组合键即可自定义修改';
+
+        keyInput.onfocus = () => {
+            keyInput.value = '按下组合键...';
+            keyInput.classList.add('recording');
+        };
+        keyInput.onblur = () => {
+            keyInput.classList.remove('recording');
+            keyInput.value = GM_getValue(keyName, defaultVal);
+        };
+        keyInput.onkeydown = (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const parts = [];
+            if (ev.ctrlKey) parts.push('Ctrl');
+            if (ev.altKey) parts.push('Alt');
+            if (ev.shiftKey) parts.push('Shift');
+            if (ev.metaKey) parts.push('Meta');
+            const k = ev.key.toUpperCase();
+            if (!['CONTROL', 'ALT', 'SHIFT', 'META'].includes(k)) {
+                parts.push(k);
+            }
+            if (parts.length > 0 && !['CONTROL', 'ALT', 'SHIFT', 'META'].includes(k)) {
+                const combo = parts.join('+');
+                keyInput.value = combo;
+                GM_setValue(keyName, combo);
+                keyInput.blur();
+                const titleSpan = titleBox.querySelector('#panel_title_text');
+                if (titleSpan) titleSpan.innerText = `快捷键已设置为 [${combo}]`;
+            }
+        };
+
+        row.appendChild(labelSpan);
+        row.appendChild(keyInput);
+        return row;
+    };
+
+    shortcutBox.appendChild(createShortcutRow('开关翻译 (中/原)', 'shortcut_toggle_pause', 'Alt+T'));
+    shortcutBox.appendChild(createShortcutRow('切换模式 (追/替)', 'shortcut_toggle_mode', 'Alt+R'));
+    shortcutBox.appendChild(createShortcutRow('呼出/关闭面板', 'shortcut_toggle_panel', 'Alt+P'));
+    shortcutSection.appendChild(shortcutBox);
+    body.appendChild(shortcutSection);
+
+    // 模块 D：当前启用规则的个性化配置
     let current_details = document.createElement('details');
     current_details.className = 'translator-details';
     current_details.open = true;
@@ -366,7 +562,7 @@ function initPanel() {
         }
     };
 
-    // 模块 D：支持的网站规则列表（升级为 3 列网格紧凑标签）
+    // 模块 E：支持的网站规则列表（升级为 3 列网格紧凑标签）
     let enable_details = document.createElement('details');
     enable_details.className = 'translator-details';
     enable_details.innerHTML = p.createHTML(`<summary><span>启用规则 (${rules.length})</span><span style="font-size:10px;color:#57606a">▼</span></summary>`);
@@ -407,7 +603,7 @@ function initPanel() {
     window.top.document.body.appendChild(shadowRoot);
     let shadow = shadowRoot.attachShadow({ mode: "closed" });
 
-    // 注入极简扁平 CSS（3列网格、完美原生滚轮支持）
+    // 注入极简扁平 CSS（3列网格、完美原生滚轮支持、快捷键与导出样式）
     let panelStyle = document.createElement('style');
     panelStyle.textContent = `
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -415,11 +611,13 @@ function initPanel() {
             position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
             background: transparent;
             z-index: 99999; display: none; visibility: visible !important;
+            align-items: center; justify-content: center;
         }
         .translator-dialog {
-            position: fixed; width: 380px; max-width: 95vw; max-height: 82vh;
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 380px; max-width: 95vw; max-height: 82vh;
             background: #ffffff; border: 1px solid #d0d7de; border-radius: 8px;
-            box-shadow: none; display: flex; flex-direction: column;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); display: flex; flex-direction: column;
             overflow-y: auto; overflow-x: hidden;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
             color: #24292f; visibility: visible !important; z-index: 100000;
@@ -452,7 +650,10 @@ function initPanel() {
         .translator-section-title {
             font-size: 11px; font-weight: 600; color: #57606a; margin-bottom: 5px;
         }
-        .engine-select-wrapper { width: 100%; }
+        .translator-sub-label {
+            font-size: 11px; color: #57606a; margin-bottom: 3px;
+        }
+        .engine-select-wrapper { width: 100%; margin-bottom: 4px; }
         .engine-select {
             width: 100%; height: 30px; padding: 0 8px; border-radius: 6px;
             border: 1px solid #d0d7de; background: #ffffff; font-size: 12.5px;
@@ -477,6 +678,32 @@ function initPanel() {
         input:checked + .translator-slider { background-color: #5842f4; }
         input:checked + .translator-slider:before { transform: translateX(14px); }
 
+        .shortcut-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 3px 0; font-size: 11.5px; color: #24292f;
+        }
+        .shortcut-input {
+            width: 90px; height: 22px; text-align: center; border: 1px solid #d0d7de;
+            border-radius: 4px; font-size: 11px; background: #ffffff; cursor: pointer;
+            color: #24292f; font-family: monospace; outline: none; transition: border 0.15s;
+        }
+        .shortcut-input.recording {
+            border-color: #5842f4; background: #f0edff; color: #5842f4; font-weight: bold;
+        }
+
+        .export-btn-group {
+            display: flex; gap: 8px; margin-top: 4px;
+        }
+        .export-btn {
+            flex: 1; height: 28px; border: 1px solid #d0d7de; border-radius: 6px;
+            background: #ffffff; font-size: 11.5px; font-weight: 500; color: #24292f;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            gap: 4px; transition: all 0.15s; outline: none;
+        }
+        .export-btn:hover {
+            background: #f3f4f6; border-color: #5842f4; color: #5842f4;
+        }
+
         details.translator-details {
             background: #fafbfc; border: 1px solid #e1e4e8; border-radius: 6px; overflow: hidden;
         }
@@ -489,7 +716,6 @@ function initPanel() {
         details.translator-details summary::-webkit-details-marker { display: none; }
         details.translator-details summary:hover { background: #eaecef; }
         
-        /* 3 列紧凑网格布局 */
         .rules-grid {
             display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 4px; padding: 8px 10px;
             background: #ffffff; border-top: 1px solid #e1e4e8;
@@ -591,31 +817,15 @@ function initPanel() {
     let initialRight = 0, initialTop = 0;
     let lastToggleTime = 0;
 
-    const updateDialogPosition = () => {
-        const ballRect = ballWrapper.getBoundingClientRect();
-        const dialogWidth = 380;
-        let right = (window.innerWidth - ballRect.left) + 8;
-        if (right + dialogWidth > window.innerWidth) {
-            right = Math.max(10, window.innerWidth - dialogWidth - 10);
-        }
-        let top = ballRect.top;
-        if (top + 450 > window.innerHeight) {
-            top = Math.max(10, window.innerHeight - 460);
-        }
-        dialog.style.right = `${Math.max(10, right)}px`;
-        dialog.style.top = `${Math.max(10, top)}px`;
-    };
-
     const togglePanel = () => {
         const now = Date.now();
         if (now - lastToggleTime < 250) return;
         lastToggleTime = now;
-        if (mask.style.display === 'block') {
+        if (mask.style.display === 'flex' || mask.style.display === 'block') {
             mask.style.display = 'none';
         } else {
             renderCurrentRule();
-            updateDialogPosition();
-            mask.style.display = 'block';
+            mask.style.display = 'flex';
         }
     };
 
@@ -710,8 +920,47 @@ function initPanel() {
         open._touchMoved = false;
     });
 
+    // 7. 全局自定义快捷键事件监听
+    window.top.document.addEventListener('keydown', (e) => {
+        if (!GM_getValue('enable_shortcuts', false)) return;
+        const target = e.target;
+        if (target && (['INPUT', 'TEXTAREA'].includes(target.tagName) || target.isContentEditable)) {
+            return;
+        }
+
+        const parts = [];
+        if (e.ctrlKey) parts.push('Ctrl');
+        if (e.altKey) parts.push('Alt');
+        if (e.shiftKey) parts.push('Shift');
+        if (e.metaKey) parts.push('Meta');
+        const key = e.key.toUpperCase();
+        if (!['CONTROL', 'ALT', 'SHIFT', 'META'].includes(key)) {
+            parts.push(key);
+        }
+        if (parts.length === 0) return;
+        const currentCombo = parts.join('+');
+
+        const sPause = GM_getValue('shortcut_toggle_pause', 'Alt+T');
+        const sMode = GM_getValue('shortcut_toggle_mode', 'Alt+R');
+        const sPanel = GM_getValue('shortcut_toggle_panel', 'Alt+P');
+
+        if (currentCombo === sPause) {
+            e.preventDefault();
+            leftBtn.click();
+        } else if (currentCombo === sMode) {
+            e.preventDefault();
+            bottomBtn.click();
+        } else if (currentCombo === sPanel) {
+            e.preventDefault();
+            togglePanel();
+        }
+    });
+
     shadow.appendChild(ballWrapper);
-    shadow.querySelector('.engine-select option[value=' + choice + ']').selected = true;
+    shadow.querySelector('.engine-select option[value="' + choice + '"]').selected = true;
+    if (backupWrapper.querySelector('option[value="' + backupChoice + '"]')) {
+        backupWrapper.querySelector('option[value="' + backupChoice + '"]').selected = true;
+    }
     if (fullscrenn_hidden) window.top.document.addEventListener('fullscreenchange', () => { ballWrapper.style.display = window.top.document.fullscreenElement ? "none" : "flex"; });
 }
 
@@ -1076,12 +1325,301 @@ const GetActiveRule = () => rules.find(item => item.matcher.test(document.locati
     }, 200)
     console.log(rule ? `【翻译机】使用【${rule.name}】规则` : "【翻译机】当前无匹配规则");
     console.log(document.location.href)
+    let engineStarted = {};
+    async function doTranslateWithFailover(text, lang, primaryEngine, backupEngine, enableFailover) {
+        let cached = sessionStorage.getItem(primaryEngine + '-' + text);
+        if (cached) return { text: cached, engine: primaryEngine };
+
+        if (enableFailover && backupEngine && backupEngine !== primaryEngine) {
+            let backupCached = sessionStorage.getItem(backupEngine + '-' + text);
+            if (backupCached) return { text: backupCached, engine: backupEngine };
+        }
+
+        const callEngine = (engine) => {
+            return new Promise((resolve, reject) => {
+                const timer = setTimeout(() => reject(new Error('Timeout 6500ms')), 6500);
+                try {
+                    if (startup[engine] && !engineStarted[engine]) {
+                        PromiseRetryWrap(startup[engine]).catch(() => {});
+                        engineStarted[engine] = true;
+                    }
+                    const fn = transdict[engine];
+                    if (!fn) return reject(new Error('Unknown engine: ' + engine));
+                    fn(text, lang).then(res => {
+                        clearTimeout(timer);
+                        if (!res || typeof res !== 'string' || res.trim().length === 0) {
+                            reject(new Error('Empty result'));
+                        } else {
+                            resolve(res);
+                        }
+                    }).catch(err => {
+                        clearTimeout(timer);
+                        reject(err);
+                    });
+                } catch (e) {
+                    clearTimeout(timer);
+                    reject(e);
+                }
+            });
+        };
+
+        try {
+            const res = await callEngine(primaryEngine);
+            return { text: res, engine: primaryEngine };
+        } catch (err) {
+            if (enableFailover && backupEngine && backupEngine !== primaryEngine) {
+                console.warn(`[翻译机] 主引擎 [${primaryEngine}] 异常，自动容灾切换备用引擎 [${backupEngine}]:`, err);
+                try {
+                    const backupRes = await callEngine(backupEngine);
+                    return { text: backupRes, engine: backupEngine };
+                } catch (bErr) {
+                    console.error(`[翻译机] 备用引擎 [${backupEngine}] 亦失败:`, bErr);
+                    throw bErr;
+                }
+            }
+            throw err;
+        }
+    }
+
+    function copyToClipboard(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+        }
+        return fallbackCopy(text);
+    }
+
+    function fallbackCopy(text) {
+        return new Promise((resolve, reject) => {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                ta.style.top = '-9999px';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                resolve();
+            } catch (e) {
+                reject(e);
+            }
+        });
+    }
+
+    function downloadMarkdown(md) {
+        let docTitle = document.title.split(/[:\-\–]/)[0].trim() || 'translated_doc';
+        docTitle = docTitle.replace(/[\\/:*?"<>|]/g, '_');
+        const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${docTitle}_translated.md`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            if (a.parentNode) a.parentNode.removeChild(a);
+            URL.revokeObjectURL(a.href);
+        }, 500);
+    }
+
+    function getTranslatedMarkdown() {
+        const root = document.querySelector(
+            '.markdown-body, article.markdown-body, #readme, div[data-target="readme.body"], ' +
+            'div[data-target="react-blob.renderedBlob"] .markdown-body, main article, article'
+        );
+        if (!root) {
+            const codeLines = document.querySelectorAll('table.js-file-line-container td.js-file-line');
+            if (codeLines.length > 0) {
+                return Array.from(codeLines).map(td => td.textContent).join('\n');
+            }
+            return null;
+        }
+
+        const clone = root.cloneNode(true);
+
+        clone.querySelectorAll('a.anchor, button, .js-clipboard-copy, .zeroclipboard-container, .translator-line-break').forEach(el => el.remove());
+
+        const hasTranslation = clone.querySelector('.translator-result');
+        if (hasTranslation) {
+            clone.querySelectorAll('.translator-original').forEach(el => el.remove());
+            clone.querySelectorAll('.translator-result').forEach(el => {
+                el.outerHTML = el.innerHTML;
+            });
+        }
+
+        function htmlToMd(node) {
+            if (!node) return '';
+            if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+            if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+            const tag = node.tagName.toLowerCase();
+            if (['script', 'style', 'noscript'].includes(tag)) return '';
+
+            let inner = Array.from(node.childNodes).map(htmlToMd).join('');
+
+            switch (tag) {
+                case 'h1': return `\n# ${inner.trim()}\n\n`;
+                case 'h2': return `\n## ${inner.trim()}\n\n`;
+                case 'h3': return `\n### ${inner.trim()}\n\n`;
+                case 'h4': return `\n#### ${inner.trim()}\n\n`;
+                case 'h5': return `\n##### ${inner.trim()}\n\n`;
+                case 'h6': return `\n###### ${inner.trim()}\n\n`;
+                case 'p': return `\n${inner.trim()}\n\n`;
+                case 'br': return `\n`;
+                case 'strong':
+                case 'b': return `**${inner.trim()}**`;
+                case 'em':
+                case 'i': return `*${inner.trim()}*`;
+                case 'code':
+                    if (node.parentElement && node.parentElement.tagName.toLowerCase() === 'pre') {
+                        return inner;
+                    }
+                    return `\`${inner.trim()}\``;
+                case 'pre': {
+                    const codeNode = node.querySelector('code');
+                    const lang = codeNode ? (codeNode.className.match(/language-(\\w+)/) || ['',''])[1] : '';
+                    const codeText = codeNode ? codeNode.textContent : node.textContent;
+                    return `\n\`\`\`${lang}\n${codeText.trim()}\n\`\`\`\n\n`;
+                }
+                case 'blockquote': return `\n> ${inner.trim().replace(/\n/g, '\n> ')}\n\n`;
+                case 'ul': return `\n${inner}\n`;
+                case 'ol': return `\n${inner}\n`;
+                case 'li': {
+                    const parent = node.parentElement ? node.parentElement.tagName.toLowerCase() : 'ul';
+                    if (parent === 'ol') {
+                        const idx = Array.from(node.parentElement.children).indexOf(node) + 1;
+                        return `${idx}. ${inner.trim()}\n`;
+                    }
+                    return `- ${inner.trim()}\n`;
+                }
+                case 'a': {
+                    const href = node.getAttribute('href') || '';
+                    return `[${inner.trim()}](${href})`;
+                }
+                case 'img': {
+                    const src = node.getAttribute('src') || '';
+                    const alt = node.getAttribute('alt') || '';
+                    return `![${alt}](${src})`;
+                }
+                case 'hr': return `\n---\n\n`;
+                case 'table': {
+                    const rows = Array.from(node.querySelectorAll('tr'));
+                    if (rows.length === 0) return inner;
+                    let mdTable = '\n';
+                    rows.forEach((tr, rIdx) => {
+                        const cells = Array.from(tr.querySelectorAll('th, td'));
+                        mdTable += '| ' + cells.map(c => htmlToMd(c).replace(/[\r\n]+/g, ' ').trim()).join(' | ') + ' |\n';
+                        if (rIdx === 0) {
+                            mdTable += '| ' + cells.map(() => '---').join(' | ') + ' |\n';
+                        }
+                    });
+                    return mdTable + '\n';
+                }
+                default:
+                    return inner;
+            }
+        }
+
+        let md = htmlToMd(clone);
+        md = md.replace(/\n{3,}/g, '\n\n').trim();
+        return md;
+    }
+
+    // 自动将「复制译文」和「下载译文」注入 GitHub 原生工具栏
+    function injectGitHubToolbarButtons() {
+        if (!window.location.hostname.includes('github.com')) return;
+        if (document.getElementById('gh-translator-copy-btn')) return;
+
+        const rawBtn = document.querySelector(
+            'a[data-testid="raw-button"], [data-testid="copy-raw-button"], [data-testid="download-raw-button"], ' +
+            'button[aria-label="Copy raw content"], button[aria-label="Download raw content"], ' +
+            'a#raw-url, a[href*="/raw/"]'
+        );
+
+        let targetContainer = null;
+        let insertBeforeEl = null;
+
+        if (rawBtn) {
+            targetContainer = rawBtn.closest('div[class*="ButtonGroup"], div[class*="Box-header"] > div, div[style*="flex"], div[class*="prc-"]') || rawBtn.parentElement;
+            insertBeforeEl = rawBtn;
+        } else {
+            const readmeHeader = document.querySelector('#readme .Box-header, #readme header, [data-target="readme.body"]')?.previousElementSibling || document.querySelector('#readme .Box-header');
+            if (readmeHeader) {
+                let rightBox = readmeHeader.querySelector('div[class*="Box-header"] > div, div[style*="flex"], div.d-flex, div[class*="prc-"]');
+                targetContainer = rightBox || readmeHeader;
+            }
+        }
+
+        if (!targetContainer) return;
+
+        const btnGroup = document.createElement('div');
+        btnGroup.id = 'gh-translator-btn-group';
+
+        const copySvg = '<svg viewBox="0 0 16 16"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z"></path><path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z"></path></svg>';
+        const dlSvg = '<svg viewBox="0 0 16 16"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z"></path><path d="M7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.969a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.78a.749.749 0 1 1 1.06-1.06l1.97 1.969Z"></path></svg>';
+
+        const copyBtn = document.createElement('button');
+        copyBtn.id = 'gh-translator-copy-btn';
+        copyBtn.className = 'translator-gh-btn';
+        copyBtn.title = '复制当前已翻译的 Markdown 内容';
+        copyBtn.innerHTML = p.createHTML(copySvg + '<span>复制译文</span>');
+        copyBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const md = getTranslatedMarkdown();
+            if (!md) {
+                alert('未检测到可导出的 Markdown 结构（请确认当前页面有 README 或正文）');
+                return;
+            }
+            copyToClipboard(md).then(() => {
+                copyBtn.innerHTML = p.createHTML('✅ <span>已复制译文</span>');
+                setTimeout(() => {
+                    copyBtn.innerHTML = p.createHTML(copySvg + '<span>复制译文</span>');
+                }, 2000);
+            });
+        };
+
+        const dlBtn = document.createElement('button');
+        dlBtn.id = 'gh-translator-download-btn';
+        dlBtn.className = 'translator-gh-btn';
+        dlBtn.title = '下载当前已翻译的 .md 文件';
+        dlBtn.innerHTML = p.createHTML(dlSvg + '<span>下载译文</span>');
+        dlBtn.onclick = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const md = getTranslatedMarkdown();
+            if (!md) {
+                alert('未检测到可导出的 Markdown 结构');
+                return;
+            }
+            downloadMarkdown(md);
+            dlBtn.innerHTML = p.createHTML('✅ <span>已下载</span>');
+            setTimeout(() => {
+                dlBtn.innerHTML = p.createHTML(dlSvg + '<span>下载译文</span>');
+            }, 2000);
+        };
+
+        btnGroup.appendChild(copyBtn);
+        btnGroup.appendChild(dlBtn);
+
+        if (insertBeforeEl && insertBeforeEl.parentNode === targetContainer) {
+            targetContainer.insertBefore(btnGroup, insertBeforeEl);
+        } else {
+            targetContainer.appendChild(btnGroup);
+        }
+    }
+
+
     let main = _ => {
         if (isPausedMode || !rule) return;
         const choice = GM_getValue('translate_choice', '谷歌翻译');
+        const backupChoice = GM_getValue('translate_backup_choice', '必应翻译');
+        const enableFailover = GM_getValue('enable_failover', true);
+
         for (const option of rule.options) {
             if (!GM_getValue("enable_option:" + rule.name + "-" + option.name, true)) {
-                continue
+                continue;
             }
             const temp = [...new Set(option.selector())];
             for (let i = 0; i < temp.length; i++) {
@@ -1097,22 +1635,26 @@ const GetActiveRule = () => rules.find(item => item.matcher.test(document.locati
                     rawText: rawText,
                     rule: rule,
                     option: option
-                }
-                if (sessionStorage.getItem(choice + '-' + text)) {
-                    setterParams.text = sessionStorage.getItem(choice + '-' + text)
+                };
+
+                pass_lang(text).then(lang => {
+                    return doTranslateWithFailover(text, lang, choice, backupChoice, enableFailover);
+                }).then(({ text: s, engine }) => {
+                    setterParams.translatorName = engine;
+                    setterParams.text = s;
                     option.textSetter(setterParams);
-                    removeItem(globalProcessingSave, now)
-                } else {
-                    pass_lang(text).then(lang => transdict[choice](text, lang)).then(s => {
-                        setterParams.text = s
-                        option.textSetter(setterParams);
-                        removeItem(globalProcessingSave, now);
-                    })
-                }
+                    removeItem(globalProcessingSave, now);
+                }).catch(err => {
+                    removeItem(globalProcessingSave, now);
+                    delete now.dataset.translate;
+                });
             }
         }
     };
-    PromiseRetryWrap(startup[GM_getValue('translate_choice', '谷歌翻译')]).then(() => { document.js_translater = setInterval(main, 80) });
+    PromiseRetryWrap(startup[GM_getValue('translate_choice', '谷歌翻译')]).then(() => {
+        document.js_translater = setInterval(main, 80);
+        setInterval(injectGitHubToolbarButtons, 1000);
+    });
     if(!GM_getValue('show_translate_ball',true))return;
     initPanel();
 })();
